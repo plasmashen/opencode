@@ -1,0 +1,50 @@
+# Fast-forwards this fork's `dev` branch to upstream (anomalyco/opencode).
+#
+# Why this file lives on the `sync` branch and not on `dev`:
+#   - Scheduled workflows only trigger from the repository's default branch,
+#     so the fork's default branch is `sync`, which hosts only this file.
+#   - `dev` therefore stays a byte-for-byte mirror of upstream `dev` with no
+#     extra commits or merge commits; `git pull` on dev is always a clean
+#     fast-forward.
+#
+# Safety: the push is fast-forward only. If the fork's `dev` ever diverges
+# (e.g. someone pushes their own commits to it), the run fails loudly instead
+# of rewriting history.
+name: Sync fork
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-fork
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fast-forward dev from upstream
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          origin="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          upstream="https://github.com/anomalyco/opencode.git"
+
+          git init --bare mirror.git
+          cd mirror.git
+          git fetch --no-tags "$upstream" "+refs/heads/dev:refs/remotes/upstream/dev"
+          git fetch --no-tags "$origin" "+refs/heads/dev:refs/remotes/origin/dev"
+
+          if git merge-base --is-ancestor refs/remotes/origin/dev refs/remotes/upstream/dev; then
+            git push "$origin" "refs/remotes/upstream/dev:refs/heads/dev"
+            echo "dev fast-forwarded to $(git rev-parse refs/remotes/upstream/dev)"
+          else
+            echo "::error::origin/dev is not a fast-forward of upstream/dev (diverged?); refusing to overwrite"
+            exit 1
+          fi
